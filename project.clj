@@ -8,5 +8,5 @@
                  [org.clojure/data.csv "1.0.0"]]
   :repl-options {:init-ns realtime-data-pull.core}
   :target-path "target/%s"
-  :profiles {:uberjar {:aot :all}}
+  ;:profiles {:uberjar {:aot :all}}
   :jvm-opts ["-Xmx6g" "-server"])

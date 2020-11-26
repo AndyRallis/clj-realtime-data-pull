@@ -1,4 +1,4 @@
-(ns real_time_data_pull.url-utilities
+(ns realtime-data-pull.url-utilities
     (:require [clj-http.client :as client]
             [cheshire.core :as cs]
             [java-time :as t]
@@ -7,14 +7,14 @@
             [clojure.java.io :as io]))
 
 
+(defn all-date-intervals [start-time]
+  (let [start-date-as-date (apply t/zoned-date-time start-time)
+        starts (map #(t/instant (t/with-zone % "UTC"))
+                    (iterate #(t/plus % (t/days 1)) start-date-as-date))
+        ends (rest starts)]
+    (map #(hash-map :modifiedFrom %1 :modifiedBefore %2) starts ends)))
 
-(defn all-date-intervals [time-start]
-  (let [starts (map #(t/instant (t/with-zone % "UTC"))
-                                          (iterate #(t/plus % (t/days 1)) time-start))
-                              ends (rest starts)]
-                          (map #(hash-map :modifiedFrom %1 :modifiedBefore %2)  starts ends)))
-
-(defn urls [base-url uris]
+(defn build-target-urls [base-url uris]
   (map #(vector (str base-url "/2/" %) %) uris))
 
 (defn create-urls [base-url param-defaults time-start]
@@ -25,6 +25,7 @@
                (str/join "&" (map
                               (fn [a b] (str/join "=" (vector a b)))
                               %1 %2))) keys vals)))
+
 (defn apply-urls [urls days param-defaults time-start]
   (mapcat (fn [[base-url url-name]]
             (let [url-list (take days (create-urls base-url param-defaults time-start))]
@@ -84,28 +85,30 @@
 
 (defn run-the-thing [n-go-blocks days config]
   (let [url-blocks-live (atom 0)
-        write-blocks-live (atom 0)]
+        write-blocks-live (atom 0)
+        {:keys [base-url uris auth-url credentials 
+                param-defaults start-time working-path keys-to-pull]} @config]
   (swap! url-blocks-live + n-go-blocks)
   (swap! write-blocks-live + n-go-blocks)
   (add-watch url-blocks-live :URL-blocks channel-watch-for-spindown)
   (add-watch write-blocks-live :write-blocks channel-watch-for-spindown)
   (let [res-chan (async/chan)
         counter (atom {:call-counter 0 :write-counter 0})]
-    (let [url-chan (async/chan)
-          {:keys [auth-url credentials param-defaults time-start]} @config
+    (let [url-chan (async/chan) 
+          urls (build-target-urls base-url uris)
           bearer-token (get-bearer-token auth-url credentials)
           get-api-data-by-page (configure-url-call bearer-token)]
-      (load-initial-chan (apply-urls urls days param-defaults time-start) url-chan)
+      (load-initial-chan (apply-urls urls days param-defaults start-time) url-chan)
       ;; make sure URL channel is full
       (delay 5000)
       (dotimes [_ n-go-blocks]
         (async/go-loop []
-          (if-let [url-file (first (async/alts! [url-chan (async/timeout 60000)]))]
+          (if-let [url-file (first (async/alts! [url-chan (async/timeout 60000)]))]            
             (let [url (first url-file)
                   file (second url-file)]
               (get-api-data-by-page url url-chan res-chan file)
               (swap! counter update :call-counter inc)
-              (println "Processed " (:call-counter @counter) " @ URL: " url)
+             (println "Processed " (:call-counter @counter) " @ URL: " url)
               (recur))
             (swap! url-blocks-live dec)))))
     ;; make sure results are flowing through
@@ -113,8 +116,7 @@
     (dotimes [x n-go-blocks]
       (async/go-loop []
         (if-let [data-file (first (async/alts! [res-chan (async/timeout 60000)]))]
-          (let [{:keys [working-path keys-to-pull]} @config
-                data (map #(select-keys % keys-to-pull) (first data-file))
+          (let [data (map #(select-keys % keys-to-pull) (first data-file))
                 file (second data-file)]
             (writelines (str working-path file x ".edn") (pr-str data))
             (swap! counter update :write-counter inc)

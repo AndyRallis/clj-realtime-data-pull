@@ -7,7 +7,7 @@
 (defn -main
   "pull in api data"
   [n-go-blocks days]
-  (println "Beggining processesing")
+  (println "Beginning processesing")
   (println (t/local-date-time))
   (let [[url-blocks-live write-blocks-live] 
         (util/run-the-thing
